@@ -4,10 +4,10 @@
   "version": "1.18.25",
   "type": "module",
   "license": "MIT",
-  "homepage": "https://opencode.ai",
+  "homepage": "https://github.com/Unknowmyt1M/opengravity",
   "author": {
-    "name": "OpenCode",
-    "email": "hello@opencode.ai"
+    "name": "OpenGravity",
+    "email": "hello@opengravity.ai"
   },
   "scripts": {
     "typecheck": "tsgo -b",
