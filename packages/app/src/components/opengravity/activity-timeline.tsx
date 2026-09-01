@@ -25,44 +25,48 @@ export interface ActivityStep {
   filePath?: string
 }
 
-export function parseToolPartToActivity(part: ToolPart): ActivityStep {
-  const name = part.tool?.toLowerCase() ?? "tool"
-  const args = (part.input ?? {}) as Record<string, any>
-  const status = part.status === "running" ? "running" : part.status === "error" ? "failed" : "completed"
+export function parseToolPartToActivity(part: any): ActivityStep {
+  const toolName = (part.tool || part.callID || "tool") as string
+  const name = toolName.toLowerCase()
+  const state = part.state || {}
+  const args = (state.input || part.input || {}) as Record<string, any>
+  const partStatus = state.status || part.status || "completed"
+  const output = state.output || part.output
+  const status = partStatus === "running" ? "running" : partStatus === "error" ? "failed" : "completed"
 
   if (name.includes("plan") || name.includes("task")) {
     return {
-      id: part.id,
+      id: part.id || part.callID || String(Math.random()),
       kind: "plan",
       title: "Planning task execution",
       subtitle: args.prompt || args.task || "Structuring workflow",
       status,
-      rawOutput: typeof part.output === "string" ? part.output : JSON.stringify(part.output, null, 2),
+      rawOutput: typeof output === "string" ? output : JSON.stringify(output, null, 2),
     }
   }
 
   if (name === "read" || name === "view_file" || name === "read_file") {
     const file = args.file || args.path || args.AbsolutePath || args.targetFile || "file"
     return {
-      id: part.id,
+      id: part.id || part.callID || String(Math.random()),
       kind: "read",
       title: `Reading ${getFilename(file)}`,
       subtitle: file,
       filePath: file,
       status,
-      rawOutput: typeof part.output === "string" ? part.output : undefined,
+      rawOutput: typeof output === "string" ? output : undefined,
     }
   }
 
   if (name === "grep" || name === "glob" || name === "search" || name === "find_by_name" || name === "grep_search") {
     const query = args.query || args.pattern || args.Pattern || args.Query || "search"
     return {
-      id: part.id,
+      id: part.id || part.callID || String(Math.random()),
       kind: "search",
       title: `Searching codebase`,
       subtitle: `"${query}"`,
       status,
-      rawOutput: typeof part.output === "string" ? part.output : undefined,
+      rawOutput: typeof output === "string" ? output : undefined,
     }
   }
 
@@ -71,14 +75,14 @@ export function parseToolPartToActivity(part: ToolPart): ActivityStep {
     const add = args.additions ?? 1
     const del = args.deletions ?? 0
     return {
-      id: part.id,
+      id: part.id || part.callID || String(Math.random()),
       kind: "edit",
       title: `Edited ${getFilename(file)}`,
       subtitle: file,
       filePath: file,
       status,
       diffStats: { add, del },
-      rawOutput: typeof part.output === "string" ? part.output : undefined,
+      rawOutput: typeof output === "string" ? output : undefined,
     }
   }
 
@@ -86,22 +90,22 @@ export function parseToolPartToActivity(part: ToolPart): ActivityStep {
     const cmd = args.command || args.cmd || args.CommandLine || "command"
     const isTest = cmd.includes("test") || cmd.includes("check") || cmd.includes("lint")
     return {
-      id: part.id,
+      id: part.id || part.callID || String(Math.random()),
       kind: isTest ? "test" : "bash",
       title: isTest ? "Running tests & verification" : "Running command",
       subtitle: cmd,
       status,
-      rawOutput: typeof part.output === "string" ? part.output : undefined,
+      rawOutput: typeof output === "string" ? output : undefined,
     }
   }
 
   return {
-    id: part.id,
+    id: part.id || part.callID || String(Math.random()),
     kind: "generic",
     title: `Executed ${name}`,
     subtitle: typeof args === "object" ? JSON.stringify(args).slice(0, 60) : undefined,
     status,
-    rawOutput: typeof part.output === "string" ? part.output : JSON.stringify(part.output, null, 2),
+    rawOutput: typeof output === "string" ? output : JSON.stringify(output, null, 2),
   }
 }
 

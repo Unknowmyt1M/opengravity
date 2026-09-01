@@ -1,12 +1,10 @@
 import { Component, createMemo, createSignal, For, Show } from "solid-js"
-import { useTabs } from "@/context/tabs"
-import { useServerSync } from "@/context/server-sync"
-import { useSDK } from "@/context/sdk"
+import { useTabs, tabHref } from "@/context/tabs"
 import { useServer } from "@/context/server"
-import { usePlatform } from "@/context/platform"
+import { useLayout } from "@/context/layout"
 import { useCommand } from "@/context/command"
-import { useSettings } from "@/context/settings"
 import { getFilename } from "@opencode-ai/core/util/path"
+import { useNavigate } from "@solidjs/router"
 
 function formatRelativeTime(dateStr?: string | number): string {
   if (!dateStr) return "now"
@@ -29,50 +27,69 @@ export const OpenGravitySidebar: Component<{
   onOpenSettings: () => void
 }> = (props) => {
   const tabs = useTabs()
-  const sync = useServerSync()
-  const sdk = useSDK()
   const server = useServer()
-  const platform = usePlatform()
+  const layout = useLayout()
   const command = useCommand()
-  const settings = useSettings()
+  const navigate = useNavigate()
 
   const [projectsExpanded, setProjectsExpanded] = createSignal(true)
   const [conversationsExpanded, setConversationsExpanded] = createSignal(true)
 
-  // Current project directory
-  const currentDir = () => sdk().directory ?? ""
-  const currentProjectName = () => getFilename(currentDir()) || "OpenGravity"
+  // Current project directory and name
+  const projects = createMemo(() => {
+    try {
+      return layout.projects?.list?.() ?? []
+    } catch {
+      return []
+    }
+  })
 
-  // Sessions list
-  const currentSessionID = () => {
-    const current = tabs.current()
-    return current?.type === "session" ? current.sessionID : undefined
+  const currentProjectName = () => {
+    try {
+      const list = projects()
+      if (list.length > 0) return list[0].name || getFilename(list[0].worktree) || "OpenGravity Workspace"
+    } catch {
+      // Fallback
+    }
+    return "OpenGravity Workspace"
   }
 
-  const sessions = createMemo(() => {
-    return sync.data.sessions ?? []
+  // Open tabs / active session
+  const openTabs = createMemo(() => {
+    try {
+      return tabs.store ?? []
+    } catch {
+      return []
+    }
   })
 
   // Open directory picker
-  const handleOpenFolder = async () => {
-    const chosen = await platform.openDirectoryPickerDialog?.({ title: "Open Project Folder" })
-    if (chosen) {
-      tabs.newDraft({ server: server.key, directory: chosen })
+  const handleOpenFolder = () => {
+    try {
+      command.trigger("project.open")
+    } catch (e) {
+      console.error("Failed to open project folder", e)
     }
   }
 
   // Create new conversation
   const handleNewConversation = () => {
-    tabs.newDraft({ server: server.key, directory: currentDir() })
+    try {
+      const list = projects()
+      const dir = list.length > 0 ? list[0].worktree : ""
+      tabs.newDraft({ server: server.key, directory: dir })
+    } catch {
+      navigate("/")
+    }
   }
 
   return (
     <aside
-      class="flex flex-col border-r border-[#242424] bg-[#171717] text-[#cccccc] select-none transition-all duration-200 shrink-0"
+      class="flex flex-col border-r border-[#242424] bg-[#171717] text-[#cccccc] select-none transition-all duration-200 shrink-0 h-full"
       style={{ width: props.collapsed ? "52px" : "240px" }}
     >
       {/* Top bar with hamburger and history arrows */}
-      <div class="flex h-11 items-center justify-between px-3 border-b border-[#242424]">
+      <div class="flex h-11 items-center justify-between px-3 border-b border-[#242424] shrink-0">
         <button
           type="button"
           class="flex h-7 w-7 items-center justify-center rounded hover:bg-[#282828] text-[#a0a0a0] hover:text-white transition-colors"
@@ -106,7 +123,7 @@ export const OpenGravitySidebar: Component<{
 
       <Show when={!props.collapsed}>
         {/* New Conversation Button */}
-        <div class="p-2.5">
+        <div class="p-2.5 shrink-0">
           <button
             type="button"
             class="flex w-full items-center justify-center gap-2 rounded-md border border-[#3b82f6]/40 bg-[#3b82f6]/10 px-3 py-2 text-xs font-medium text-[#60a5fa] hover:border-[#3b82f6] hover:bg-[#3b82f6]/20 transition-all shadow-sm"
@@ -118,7 +135,7 @@ export const OpenGravitySidebar: Component<{
         </div>
 
         {/* Quick Nav Links */}
-        <div class="px-2 space-y-0.5 text-xs text-[#a0a0a0]">
+        <div class="px-2 space-y-0.5 text-xs text-[#a0a0a0] shrink-0">
           <button
             type="button"
             class="flex w-full items-center gap-2 rounded-md px-2.5 py-1.5 hover:bg-[#222222] hover:text-white transition-colors text-left"
@@ -130,7 +147,7 @@ export const OpenGravitySidebar: Component<{
           <button
             type="button"
             class="flex w-full items-center gap-2 rounded-md px-2.5 py-1.5 hover:bg-[#222222] hover:text-white transition-colors text-left"
-            onClick={() => command.trigger("tasks.view")}
+            onClick={() => command.trigger("session.history")}
           >
             <span class="text-sm">📅</span>
             <span>Scheduled Tasks</span>
@@ -166,15 +183,33 @@ export const OpenGravitySidebar: Component<{
 
             <Show when={projectsExpanded()}>
               <div class="mt-1 space-y-0.5">
-                <div
-                  class="flex items-center justify-between rounded-md px-2.5 py-1.5 text-xs bg-[#242424] text-white font-medium"
+                <For
+                  each={projects()}
+                  fallback={
+                    <div class="flex items-center justify-between rounded-md px-2.5 py-1.5 text-xs bg-[#242424] text-white font-medium">
+                      <div class="flex items-center gap-2 truncate">
+                        <span>📁</span>
+                        <span class="truncate">{currentProjectName()}</span>
+                      </div>
+                      <span class="text-[10px] text-[#3b82f6] font-mono">active</span>
+                    </div>
+                  }
                 >
-                  <div class="flex items-center gap-2 truncate">
-                    <span>📁</span>
-                    <span class="truncate">{currentProjectName()}</span>
-                  </div>
-                  <span class="text-[10px] text-[#3b82f6] font-mono">active</span>
-                </div>
+                  {(project) => (
+                    <div
+                      class="flex items-center justify-between rounded-md px-2.5 py-1.5 text-xs bg-[#242424] text-white font-medium cursor-pointer hover:bg-[#2c2c2c] transition-colors"
+                      onClick={() => {
+                        tabs.newDraft({ server: server.key, directory: project.worktree })
+                      }}
+                    >
+                      <div class="flex items-center gap-2 truncate">
+                        <span>📁</span>
+                        <span class="truncate">{project.name || getFilename(project.worktree)}</span>
+                      </div>
+                      <span class="text-[10px] text-[#3b82f6] font-mono">active</span>
+                    </div>
+                  )}
+                </For>
               </div>
             </Show>
           </div>
@@ -205,38 +240,31 @@ export const OpenGravitySidebar: Component<{
             <Show when={conversationsExpanded()}>
               <div class="mt-1 space-y-0.5">
                 <For
-                  each={sessions()}
+                  each={openTabs()}
                   fallback={
                     <div class="px-2.5 py-2 text-[11px] text-[#606060] italic">
-                      No past conversations
+                      No active conversations
                     </div>
                   }
                 >
-                  {(session) => {
-                    const isActive = () => currentSessionID() === session.id
-                    const title = () => session.title || "Untitled Conversation"
-                    const time = () => formatRelativeTime(session.updated_at || session.created_at)
+                  {(tab) => {
+                    const title = () => (tab.type === "session" ? `Session ${tab.sessionId.slice(0, 8)}` : "New Session Draft")
+                    const href = () => tabHref(tab)
 
                     return (
                       <button
                         type="button"
-                        class={`flex w-full items-center justify-between rounded-md px-2.5 py-1.5 text-left text-xs transition-colors group ${
-                          isActive()
-                            ? "bg-[#252525] text-white font-medium"
-                            : "text-[#a0a0a0] hover:bg-[#1f1f1f] hover:text-[#e0e0e0]"
-                        }`}
+                        class="flex w-full items-center justify-between rounded-md px-2.5 py-1.5 text-left text-xs transition-colors group text-[#a0a0a0] hover:bg-[#1f1f1f] hover:text-[#e0e0e0]"
                         onClick={() => {
-                          tabs.open({ type: "session", sessionID: session.id, server: server.key, directory: currentDir() })
+                          navigate(href())
                         }}
                       >
                         <div class="flex items-center gap-1.5 min-w-0 pr-2">
-                          <Show when={isActive()}>
-                            <span class="h-1.5 w-1.5 rounded-full bg-blue-500 shrink-0" />
-                          </Show>
+                          <span class="h-1.5 w-1.5 rounded-full bg-blue-500 shrink-0" />
                           <span class="truncate">{title()}</span>
                         </div>
                         <span class="text-[10px] text-[#666666] shrink-0 font-mono">
-                          {time()}
+                          active
                         </span>
                       </button>
                     )
@@ -248,7 +276,7 @@ export const OpenGravitySidebar: Component<{
         </div>
 
         {/* Bottom Settings Button */}
-        <div class="border-t border-[#242424] p-2">
+        <div class="border-t border-[#242424] p-2 shrink-0">
           <button
             type="button"
             class="flex w-full items-center gap-2 rounded-md px-2.5 py-1.5 text-xs text-[#909090] hover:bg-[#222222] hover:text-white transition-colors"

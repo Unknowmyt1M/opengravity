@@ -1,26 +1,21 @@
-import { Component, createEffect, createMemo, createSignal, For, onCleanup, onMount, Show } from "solid-js"
-import { usePrompt } from "@/context/prompt"
+import { Component, createMemo, createSignal, For, Show } from "solid-js"
 import { useModels } from "@/context/models"
-import { useSDK } from "@/context/sdk"
 import { usePlatform } from "@/context/platform"
 import { useServerSync } from "@/context/server-sync"
-import { useLanguage } from "@/context/language"
-import type { Model } from "@opencode-ai/sdk/v2"
 
 export const OpenGravityComposer: Component<{
   onSend: (text: string) => void
   onStop?: () => void
   isStreaming?: boolean
 }> = (props) => {
-  const prompt = usePrompt()
   const models = useModels()
-  const sdk = useSDK()
   const platform = usePlatform()
   const sync = useServerSync()
-  const language = useLanguage()
 
   const [inputVal, setInputVal] = createSignal("")
+  const [selectedModel, setSelectedModel] = createSignal("Gemini 3.5 Flash Low")
   const [modelDropdownOpen, setModelDropdownOpen] = createSignal(false)
+  const [attachments, setAttachments] = createSignal<Array<{ name: string; path: string }>>([])
   let textareaRef: HTMLTextAreaElement | undefined
 
   // Auto-resize textarea
@@ -42,17 +37,25 @@ export const OpenGravityComposer: Component<{
     if (!text || props.isStreaming) return
     props.onSend(text)
     setInputVal("")
+    setAttachments([])
     if (textareaRef) textareaRef.style.height = "auto"
   }
 
-  // Model selection
-  const currentModel = () => {
-    const active = prompt.model()
-    return active ? `${active.provider}/${active.model}` : "Gemini 3.5 Flash Low"
-  }
-
   const availableModels = createMemo(() => {
-    return models.data?.models ?? [
+    try {
+      const list = models.list?.()
+      if (list && list.length > 0) {
+        return list.map((m: any) => ({
+          id: m.id,
+          name: m.name || m.id,
+          tier: m.family?.includes("pro") ? "Medium" : "Low",
+          speed: "Fast",
+        }))
+      }
+    } catch {
+      // Fallback defaults
+    }
+    return [
       { id: "google/gemini-2.5-flash", name: "Gemini 3.5 Flash", tier: "Low", speed: "Fast" },
       { id: "google/gemini-2.5-pro", name: "Gemini 3.1 Pro", tier: "Low", speed: "Fast" },
       { id: "anthropic/claude-3-7-sonnet", name: "Claude Sonnet 4.6 (Thinking)", tier: "Medium", speed: "Fast" },
@@ -63,15 +66,24 @@ export const OpenGravityComposer: Component<{
 
   // Attachment handler
   const handlePickFile = async () => {
-    await platform.openAttachmentPickerDialog?.({}, (file) => {
-      prompt.attachments.add(file)
-    })
+    try {
+      const chosen = await (platform as any).openDirectoryPickerDialog?.({ title: "Attach File" })
+      if (chosen) {
+        setAttachments([...attachments(), { name: chosen.split(/[\\/]/).pop() || chosen, path: chosen }])
+      }
+    } catch {
+      // Ignore
+    }
   }
 
   // Check MCP status
   const mcpHasErrors = createMemo(() => {
-    const mcpServers = sync.data.mcp ?? {}
-    return Object.values(mcpServers).some((status) => status === "error" || (status as any)?.status === "error")
+    try {
+      const mcpServers = (sync()?.data as any)?.mcp ?? {}
+      return Object.values(mcpServers).some((status) => status === "error" || (status as any)?.status === "error")
+    } catch {
+      return false
+    }
   })
 
   return (
@@ -80,16 +92,16 @@ export const OpenGravityComposer: Component<{
         class="relative flex flex-col rounded-xl border border-[#2e2e2e] bg-[#1e1e1e] shadow-lg transition-all focus-within:border-[#3b82f6] focus-within:shadow-[0_0_12px_rgba(59,130,246,0.15)]"
       >
         {/* Attachment Pills */}
-        <Show when={prompt.attachments.files().length > 0}>
+        <Show when={attachments().length > 0}>
           <div class="flex flex-wrap gap-1.5 px-3.5 pt-2.5">
-            <For each={prompt.attachments.files()}>
+            <For each={attachments()}>
               {(file) => (
                 <div class="flex items-center gap-1.5 rounded bg-[#2a2a2a] px-2 py-0.5 text-xs text-[#d0d0d0]">
                   <span>📄 {file.name}</span>
                   <button
                     type="button"
                     class="text-[#808080] hover:text-red-400"
-                    onClick={() => prompt.attachments.remove(file)}
+                    onClick={() => setAttachments(attachments().filter((f) => f.path !== file.path))}
                   >
                     ×
                   </button>
@@ -110,30 +122,31 @@ export const OpenGravityComposer: Component<{
           onKeyDown={handleKeyDown}
           placeholder="Ask anything, @ to mention, / for actions"
           rows={1}
-          class="w-full resize-none bg-transparent px-3.5 pt-3 pb-2 text-xs text-[#ededed] placeholder-[#707070] outline-none leading-relaxed select-text min-h-[38px] max-h-[180px]"
+          class="w-full resize-none bg-transparent px-4 pt-3.5 pb-2 text-sm text-[#e6e6e6] placeholder-[#666666] outline-none font-sans leading-relaxed"
+          style={{ "max-height": "180px", "min-height": "44px" }}
         />
 
-        {/* Controls Bottom Row */}
-        <div class="flex items-center justify-between px-3 py-2 border-t border-[#262626]">
+        {/* Bottom Toolbar */}
+        <div class="flex items-center justify-between px-3 pb-2.5 pt-1 border-t border-[#262626]/80 text-xs">
           <div class="flex items-center gap-2">
-            {/* Context/Attachment (+) Button */}
+            {/* Context/Attach (+) Button */}
             <button
               type="button"
-              class="flex h-6 w-6 items-center justify-center rounded-md hover:bg-[#2c2c2c] text-[#909090] hover:text-white transition-colors"
+              class="flex h-7 w-7 items-center justify-center rounded-md border border-[#333333] hover:bg-[#282828] text-[#999999] hover:text-white transition-colors"
               onClick={handlePickFile}
-              title="Add Context / Attachment"
+              title="Add Context / Files"
             >
-              <span class="text-sm font-bold leading-none">+</span>
+              <span class="text-sm font-semibold">+</span>
             </button>
 
-            {/* Model Selector Pill */}
+            {/* Model Pill Dropdown */}
             <div class="relative">
               <button
                 type="button"
                 class="flex items-center gap-1.5 rounded-md bg-[#282828] hover:bg-[#323232] px-2.5 py-1 text-[11px] text-[#cccccc] hover:text-white transition-colors"
                 onClick={() => setModelDropdownOpen(!modelDropdownOpen())}
               >
-                <span class="truncate max-w-[160px] font-medium">{currentModel()}</span>
+                <span class="truncate max-w-[160px] font-medium">{selectedModel()}</span>
                 <span class="text-[9px] text-[#808080]">{modelDropdownOpen() ? "▲" : "▼"}</span>
               </button>
 
@@ -151,12 +164,12 @@ export const OpenGravityComposer: Component<{
                         type="button"
                         class="flex w-full items-center justify-between rounded-md px-2 py-1.5 text-left hover:bg-[#2e2e2e] text-[#d0d0d0] hover:text-white transition-colors group"
                         onClick={() => {
-                          prompt.setModel({ provider: m.id.split("/")[0], model: m.id.split("/")[1] || m.id })
+                          setSelectedModel(m.name)
                           setModelDropdownOpen(false)
                         }}
                       >
                         <div class="flex flex-col min-w-0 pr-2">
-                          <span class="font-medium truncate">{m.name || m.id}</span>
+                          <span class="font-medium truncate">{m.name}</span>
                           <Show when={m.tier}>
                             <span class="text-[10px] text-[#808080]">{m.tier} Tier</span>
                           </Show>
@@ -182,7 +195,7 @@ export const OpenGravityComposer: Component<{
                   </span>
                 }
               >
-                <span class="flex items-center gap-1 text-[11px] text-amber-400 px-1.5 py-0.5 rounded bg-amber-500/10 border border-amber-500/20 font-medium">
+                <span class="flex items-center gap-1 text-[11px] text-amber-400 px-1.5 py-0.5 rounded bg-amber-500/10 border border-amber-500/20">
                   <span>⚠</span>
                   <span>MCP Error</span>
                 </span>
@@ -190,38 +203,43 @@ export const OpenGravityComposer: Component<{
             </div>
           </div>
 
-          <div class="flex items-center gap-2">
-            {/* Microphone Voice Input */}
+          {/* Right Action Controls */}
+          <div class="flex items-center gap-1.5">
+            {/* Voice Mic Input */}
             <button
               type="button"
-              class="flex h-7 w-7 items-center justify-center rounded-full hover:bg-[#2c2c2c] text-[#808080] hover:text-white transition-colors"
-              title="Voice Input (Mic)"
+              class="flex h-7 w-7 items-center justify-center rounded-md hover:bg-[#282828] text-[#888888] hover:text-white text-xs transition-colors"
+              title="Voice Input"
             >
               🎤
             </button>
 
-            {/* Send / Stop Button */}
+            {/* Submit / Stop Button */}
             <Show
-              when={!props.isStreaming}
+              when={props.isStreaming}
               fallback={
                 <button
                   type="button"
-                  class="flex h-7 w-7 items-center justify-center rounded-full bg-red-500 hover:bg-red-600 text-white transition-colors shadow-md"
-                  onClick={props.onStop}
-                  title="Stop Execution"
+                  class={`flex h-7 w-7 items-center justify-center rounded-md transition-all ${
+                    inputVal().trim()
+                      ? "bg-blue-600 hover:bg-blue-500 text-white shadow-sm"
+                      : "bg-[#282828] text-[#666666] cursor-not-allowed"
+                  }`}
+                  disabled={!inputVal().trim()}
+                  onClick={handleSubmit}
+                  title="Send Message"
                 >
-                  <span class="h-2.5 w-2.5 bg-white rounded-sm" />
+                  <span class="text-xs font-bold">↑</span>
                 </button>
               }
             >
               <button
                 type="button"
-                disabled={!inputVal().trim()}
-                class="flex h-7 w-7 items-center justify-center rounded-full bg-[#3b82f6] hover:bg-[#2563eb] disabled:bg-[#2a2a2a] disabled:text-[#666666] text-white transition-all shadow-md active:scale-95"
-                onClick={handleSubmit}
-                title="Send Message (Enter)"
+                class="flex h-7 w-7 items-center justify-center rounded-md bg-red-600 hover:bg-red-500 text-white transition-all shadow-sm"
+                onClick={props.onStop}
+                title="Stop Generation"
               >
-                <span class="text-sm font-bold">→</span>
+                <span class="h-2.5 w-2.5 rounded-xs bg-white" />
               </button>
             </Show>
           </div>
